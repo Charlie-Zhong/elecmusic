@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>Web Audio 梦幻合成器 (八度快捷键版)</title>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            background-color: #0a0a1a;
+            color: #eee;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 40px 20px;
+            margin: 0;
+            overflow-y: hidden;
+        }
+
+        .top-controls {
+            display: flex;
+            align-items: center;
+            gap: 30px;
+            margin-bottom: 40px;
+            background: #1a1a2e;
+            padding: 15px 30px;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+            border: 1px solid #333;
+        }
+
+        #start-btn {
+            padding: 10px 24px;
+            font-size: 16px;
+            background-color: #6C63FF;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+            box-shadow: 0 4px 15px rgba(108, 99, 255, 0.4);
+            transition: all 0.3s ease;
+        }
+        #start-btn:hover { transform: scale(1.05); }
+        #start-btn:disabled { 
+            background-color: #222; 
+            color: #555; 
+            cursor: not-allowed; 
+            box-shadow: none; 
+            transform: none;
+        }
+
+        .transpose-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 15px;
+            font-weight: bold;
+            color: #a0a0b5;
+        }
+
+        select {
+            padding: 8px 12px;
+            font-size: 16px;
+            background-color: #111;
+            color: #6C63FF;
+            border: 1px solid #444;
+            border-radius: 6px;
+            cursor: pointer;
+            outline: none;
+            font-weight: bold;
+            text-align: center;
+        }
+        select:focus { border-color: #6C63FF; }
+        
+        .hint-text {
+            font-size: 13px;
+            color: #888;
+            margin-left: 10px;
+            background: #111;
+            padding: 6px 12px;
+            border-radius: 6px;
+            border: 1px solid #333;
+        }
+
+        .keyboard-wrapper {
+            width: 100%;
+            max-width: 1400px;
+            overflow-x: auto; 
+            padding: 20px 0;
+            display: flex;
+            justify-content: center;
+        }
+        .keyboard-wrapper::-webkit-scrollbar { height: 8px; }
+        .keyboard-wrapper::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
+
+        .keyboard {
+            display: flex;
+            position: relative;
+            user-select: none;
+            background: #111;
+            padding: 12px;
+            border-radius: 12px;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.9), inset 0 10px 20px rgba(0,0,0,0.5);
+        }
+
+        .key {
+            box-sizing: border-box;
+            cursor: pointer;
+            border-radius: 0 0 6px 6px;
+            display: flex;
+            align-items: flex-end;
+            justify-content: center;
+            transition: background-color 0.1s;
+        }
+
+        .key.white {
+            width: 48px;
+            height: 240px;
+            background-color: #e6e6f0;
+            border: 1px solid #ccc;
+            margin: 0 1px;
+            z-index: 1;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.2);
+        }
+        .key.white:active, .key.white.active {
+            background-color: #c0c0d0;
+            box-shadow: 0 0 2px rgba(0,0,0,0.2);
+            transform: translateY(2px);
+        }
+
+        .key.black {
+            width: 30px;
+            height: 150px;
+            background-color: #0d0d1a;
+            position: absolute;
+            z-index: 2;
+            border: 1px solid #000;
+            box-shadow: 1px 3px 6px rgba(0,0,0,0.8);
+        }
+        .key.black:active, .key.black.active {
+            background-color: #2a2a4a;
+            box-shadow: inset 0 2px 4px rgba(0,0,0,0.9);
+        }
+    </style>
+</head>
+<body>
+
+    <div class="top-controls">
+        <button id="start-btn">点击激活引擎</button>
+        <div class="transpose-group">
+            <label for="transpose">全局移调:</label>
+            <select id="transpose"></select>
+            <div class="hint-text">
+                <b>↑ ↓</b> 升降半音 &nbsp;|&nbsp; <b>← →</b> 升降八度
+            </div>
+        </div>
+    </div>
+
+    <div class="keyboard-wrapper">
+        <div class="keyboard" id="keyboard-container"></div>
+    </div>
+
+<script>
+    // 1. 全局状态
+    let transposeOffset = 0; 
+    let audioCtx = null;
+    const activeNotes = new Map(); 
+
+    // --- 动态生成移调下拉菜单 (扩展为上下各 3 个八度: -36 到 +36) ---
+    const transposeSelect = document.getElementById('transpose');
+    for(let i = -36; i <= 36; i++) {
+        let opt = document.createElement('option');
+        opt.value = i;
+        let sign = i > 0 ? '+' : '';
+        
+        // 格式化显示：如果是 12 的倍数，标注八度
+        if (i === 0) {
+            opt.innerText = 'C (原调 0)';
+        } else if (i % 12 === 0) {
+            opt.innerText = `${sign}${i / 12} 八度 (${sign}${i})`;
+        } else {
+            opt.innerText = `${sign}${i} 半音`;
+        }
+        
+        if(i === 0) opt.selected = true;
+        transposeSelect.appendChild(opt);
+    }
+
+    transposeSelect.addEventListener('change', (e) => {
+        transposeOffset = parseInt(e.target.value, 10);
+    });
+
+    // 快捷转调/八度切换函数
+    function changeTranspose(delta) {
+        let newVal = transposeOffset + delta;
+        // 限制在 ±36 个半音以内
+        if (newVal >= -36 && newVal <= 36) {
+            transposeOffset = newVal;
+            transposeSelect.value = transposeOffset; // 实时同步下拉框 UI
+        }
+    }
+
+    // 2. 物理建模参数: 梦幻氛围音色 (Ambient Pad)
+    const DREAM_TIMBRE = {
+        1.000: 0.30,   
+        2.000: 0.45, 
+        3.000: 0.15,
+        4.000: 0.05
+    };
+
+    const SYNTH_PARAMS = {
+        attack: 0.005,   
+        decay: 1.0,    
+        sustain: 0.8,  
+        release: 1.0,  
+    };
+
+    // 3. 动态生成键盘 (MIDI 48 到 100)
+    const START_MIDI = 48; 
+    const END_MIDI = 100;   
+    const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+    const WHITE_KEY_WIDTH = 50;
+    
+    // 缝合版映射字典
+    const CODE_TO_MIDI = {
+        'KeyZ': 48, 'KeyS': 49, 'KeyX': 50, 'KeyD': 51, 'KeyC': 52, 
+        'KeyV': 53, 'KeyG': 54, 'KeyB': 55, 'KeyH': 56, 'KeyN': 57, 'KeyJ': 58, 'KeyM': 59,
+        'Comma': 60, 'KeyL': 61, 'Period': 62, 'Semicolon': 63, 'Slash': 64,
+        'KeyQ': 60, 'Digit2': 61, 'KeyW': 62, 'Digit3': 63, 'KeyE': 64, 
+        'KeyR': 65, 'Digit5': 66, 'KeyT': 67, 'Digit6': 68, 'KeyY': 69, 'Digit7': 70, 'KeyU': 71,
+        'KeyI': 72, 'Digit9': 73, 'KeyO': 74, 'Digit0': 75, 'KeyP': 76, 
+        'BracketLeft': 77, 'Equal': 78, 'BracketRight': 79, 
+        'Backspace': 80, 'Backslash': 81, 'Insert': 82, 'Delete': 83, 'End': 84,         
+        'Numpad1': 84, 'Numpad2': 86, 'Numpad3': 88, 
+        'Numpad4': 89, 'Numpad5': 91, 'Numpad6': 93, 
+        'Numpad7': 95, 'Numpad8': 96, 'Numpad9': 98, 
+        'Numpad0': 85, 'NumpadDecimal': 87, 
+        'NumpadDivide': 90, 'NumpadMultiply': 92, 'NumpadSubtract': 94,
+        'NumpadAdd': 97, 'NumpadEnter': 99
+    };
+
+    const kbContainer = document.getElementById('keyboard-container');
+
+    // 频率计算 (叠加转调参数)
+    function midiToFreq(midi) {
+        const transposedMidi = midi + transposeOffset;
+        return 440 * Math.pow(2, (transposedMidi - 69) / 12);
+    }
+
+    // 4. 构建可视化键盘
+    function buildVisualKeyboard() {
+        let whiteKeyCount = 0;
+        for (let midi = START_MIDI; midi <= END_MIDI; midi++) {
+            const isBlack = NOTE_NAMES[midi % 12].includes('#');
+            const keyDiv = document.createElement('div');
+            keyDiv.className = `key ${isBlack ? 'black' : 'white'}`;
+            keyDiv.id = `midi-${midi}`;
+            
+            if (isBlack) {
+                const leftPos = (whiteKeyCount * WHITE_KEY_WIDTH) - 15 + 12; 
+                keyDiv.style.left = `${leftPos}px`;
+            } else {
+                whiteKeyCount++;
+            }
+            kbContainer.appendChild(keyDiv);
+
+            keyDiv.addEventListener('mousedown', () => triggerNoteOn(midi));
+            keyDiv.addEventListener('mouseup', () => triggerNoteOff(midi));
+            keyDiv.addEventListener('mouseleave', () => triggerNoteOff(midi));
+        }
+    }
+    buildVisualKeyboard();
+
+    const startBtn = document.getElementById('start-btn');
+    startBtn.addEventListener('click', async () => {
+        if (!audioCtx) {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        if (audioCtx.state === 'suspended') await audioCtx.resume();
+        startBtn.innerText = "✨ 梦幻引擎已激活";
+        startBtn.disabled = true;
+    });
+
+    // 5. 核心发声与终止逻辑
+    function triggerNoteOn(midi) {
+        if (!audioCtx || activeNotes.has(midi)) return;
+        
+        const freq = midiToFreq(midi);
+        const now = audioCtx.currentTime;
+
+        const keyEl = document.getElementById(`midi-${midi}`);
+        if (keyEl) keyEl.classList.add('active');
+
+        const masterGain = audioCtx.createGain();
+        masterGain.connect(audioCtx.destination);
+        masterGain.gain.setValueAtTime(0, now);
+        
+        masterGain.gain.linearRampToValueAtTime(1.0, now + SYNTH_PARAMS.attack);
+        masterGain.gain.setTargetAtTime(SYNTH_PARAMS.sustain, now + SYNTH_PARAMS.attack, SYNTH_PARAMS.decay);
+
+        const oscillators = [];
+
+        for (const [ratioStr, baseAmp] of Object.entries(DREAM_TIMBRE)) {
+            const ratio = parseFloat(ratioStr);
+            const osc = audioCtx.createOscillator();
+            const partialGain = audioCtx.createGain();
+
+            osc.type = 'sine';
+            osc.frequency.value = freq * ratio;
+
+            partialGain.gain.value = baseAmp;
+
+            osc.connect(partialGain);
+            partialGain.connect(masterGain);
+            
+            osc.start(now);
+            oscillators.push(osc);
+        }
+
+        activeNotes.set(midi, { masterGain, oscillators });
+    }
+
+    function triggerNoteOff(midi) {
+        if (!audioCtx || !activeNotes.has(midi)) return;
+
+        const keyEl = document.getElementById(`midi-${midi}`);
+        if (keyEl) keyEl.classList.remove('active');
+
+        const { masterGain, oscillators } = activeNotes.get(midi);
+        const now = audioCtx.currentTime;
+
+        masterGain.gain.cancelScheduledValues(now);
+        masterGain.gain.setValueAtTime(masterGain.gain.value, now);
+        masterGain.gain.exponentialRampToValueAtTime(0.001, now + SYNTH_PARAMS.release);
+
+        oscillators.forEach(osc => osc.stop(now + SYNTH_PARAMS.release + 0.1));
+        activeNotes.delete(midi);
+    }
+
+    // 6. 键盘事件拦截 (完美集成左右八度切换)
+    window.addEventListener('keydown', (e) => {
+        // 拦截方向键
+        if (e.key === 'ArrowUp') {
+            e.preventDefault(); 
+            changeTranspose(1); // 升半音
+            return;
+        }
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            changeTranspose(-1); // 降半音
+            return;
+        }
+        if (e.key === 'ArrowLeft') {
+            e.preventDefault();
+            changeTranspose(-12); // 降一个八度
+            return;
+        }
+        if (e.key === 'ArrowRight') {
+            e.preventDefault();
+            changeTranspose(12); // 升一个八度
+            return;
+        }
+
+        if (e.repeat) return; 
+        const midiCode = CODE_TO_MIDI[e.code];
+        if (midiCode !== undefined) {
+            triggerNoteOn(midiCode);
+        }
+    });
+
+    window.addEventListener('keyup', (e) => {
+        const midiCode = CODE_TO_MIDI[e.code];
+        if (midiCode !== undefined) {
+            triggerNoteOff(midiCode);
+        }
+    });
+
+</script>
+</body>
+</html>
