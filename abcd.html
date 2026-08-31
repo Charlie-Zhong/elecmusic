@@ -2,31 +2,94 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <title>Web Audio 梦幻合成器 (八度快捷键版)</title>
+    <title>Dream Synth · 梦幻多音合成器</title>
     <style>
+        * { box-sizing: border-box; }
+
         body {
             font-family: system-ui, -apple-system, sans-serif;
-            background-color: #0a0a1a;
+            background:
+                radial-gradient(circle at 50% 0%, rgba(108,99,255,.16), transparent 38%),
+                radial-gradient(circle at 15% 80%, rgba(0,210,255,.07), transparent 30%),
+                #080914;
             color: #eee;
             display: flex;
             flex-direction: column;
             align-items: center;
-            padding: 40px 20px;
+            min-height: 100vh;
+            padding: 28px 20px 40px;
             margin: 0;
-            overflow-y: hidden;
+            overflow-x: hidden;
+        }
+
+        .app-title {
+            margin: 0 0 6px;
+            font-size: clamp(24px, 4vw, 36px);
+            letter-spacing: .04em;
+            background: linear-gradient(90deg, #fff, #a8a3ff, #73e7ff);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+        }
+
+        .subtitle {
+            margin: 0 0 22px;
+            color: #8589a8;
+            font-size: 13px;
         }
 
         .top-controls {
+            width: min(1120px, 100%);
             display: flex;
             align-items: center;
-            gap: 30px;
-            margin-bottom: 40px;
-            background: #1a1a2e;
-            padding: 15px 30px;
-            border-radius: 12px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.6);
-            border: 1px solid #333;
+            justify-content: center;
+            flex-wrap: wrap;
+            gap: 14px 24px;
+            margin-bottom: 22px;
+            background: rgba(20,21,42,.82);
+            backdrop-filter: blur(16px);
+            padding: 14px 18px;
+            border-radius: 18px;
+            box-shadow: 0 18px 50px rgba(0,0,0,.45);
+            border: 1px solid rgba(255,255,255,.09);
         }
+
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .control-label {
+            color: #9da2c2;
+            font-size: 13px;
+            font-weight: 700;
+        }
+
+        input[type="range"] {
+            width: 130px;
+            accent-color: #7c73ff;
+            cursor: pointer;
+        }
+
+        .value {
+            min-width: 46px;
+            text-align: right;
+            color: #c9c6ff;
+            font-variant-numeric: tabular-nums;
+            font-size: 13px;
+        }
+
+        #panic-btn {
+            padding: 9px 15px;
+            background: #25263d;
+            color: #d9dbed;
+            border: 1px solid #454765;
+            border-radius: 9px;
+            cursor: pointer;
+            font-weight: 700;
+        }
+        #panic-btn:hover { background: #30324e; }
 
         #start-btn {
             padding: 10px 24px;
@@ -85,8 +148,8 @@
         .keyboard-wrapper {
             width: 100%;
             max-width: 1400px;
-            overflow-x: auto; 
-            padding: 20px 0;
+            overflow-x: auto;
+            padding: 14px 0 24px;
             display: flex;
             justify-content: center;
         }
@@ -97,10 +160,12 @@
             display: flex;
             position: relative;
             user-select: none;
-            background: #111;
-            padding: 12px;
-            border-radius: 12px;
-            box-shadow: 0 20px 50px rgba(0,0,0,0.9), inset 0 10px 20px rgba(0,0,0,0.5);
+            touch-action: none;
+            background: linear-gradient(180deg, #17182a, #0d0e1a);
+            padding: 14px;
+            border-radius: 18px;
+            box-shadow: 0 24px 70px rgba(0,0,0,.72), inset 0 1px 0 rgba(255,255,255,.08);
+            border: 1px solid rgba(255,255,255,.08);
         }
 
         .key {
@@ -116,55 +181,88 @@
         .key.white {
             width: 48px;
             height: 240px;
-            background-color: #e6e6f0;
-            border: 1px solid #ccc;
+            background: linear-gradient(180deg, #f7f7fb, #d8d9e5);
+            border: 1px solid #b8bac9;
             margin: 0 1px;
             z-index: 1;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.2);
+            box-shadow: 0 5px 10px rgba(0,0,0,.28);
         }
         .key.white:active, .key.white.active {
-            background-color: #c0c0d0;
-            box-shadow: 0 0 2px rgba(0,0,0,0.2);
+            background: linear-gradient(180deg, #aaa9c8, #c9c9db);
+            box-shadow: inset 0 2px 5px rgba(0,0,0,.25);
             transform: translateY(2px);
         }
 
         .key.black {
             width: 30px;
             height: 150px;
-            background-color: #0d0d1a;
+            background: linear-gradient(180deg, #303147, #080912 78%);
             position: absolute;
             z-index: 2;
-            border: 1px solid #000;
-            box-shadow: 1px 3px 6px rgba(0,0,0,0.8);
+            border: 1px solid #05050a;
+            box-shadow: 2px 5px 9px rgba(0,0,0,.72);
         }
         .key.black:active, .key.black.active {
-            background-color: #2a2a4a;
-            box-shadow: inset 0 2px 4px rgba(0,0,0,0.9);
+            background: linear-gradient(180deg, #6862b8, #282653);
+            box-shadow: inset 0 2px 5px rgba(0,0,0,.8);
+        }
+
+        .status {
+            margin-top: 0;
+            color: #777c9e;
+            font-size: 12px;
+            text-align: center;
         }
     </style>
 </head>
 <body>
+    <h1 class="app-title">Dream Synth</h1>
+    <p class="subtitle">Ambient Pad · Polyphonic Web Audio Synthesizer</p>
 
     <div class="top-controls">
         <button id="start-btn">点击激活引擎</button>
         <div class="transpose-group">
-            <label for="transpose">全局移调:</label>
+            <label for="transpose">全局移调</label>
             <select id="transpose"></select>
             <div class="hint-text">
-                <b>↑ ↓</b> 升降半音 &nbsp;|&nbsp; <b>← →</b> 升降八度
+                <b>↑ ↓</b> 半音 &nbsp;|&nbsp; <b>← →</b> 八度
             </div>
         </div>
+
+        <div class="control-group">
+            <span class="control-label">音量</span>
+            <input id="volume" type="range" min="0" max="1" step="0.01" value="0.72">
+            <span class="value" id="volume-value">72%</span>
+        </div>
+
+        <div class="control-group">
+            <span class="control-label">混响</span>
+            <input id="reverb" type="range" min="0" max="0.8" step="0.01" value="0.18">
+            <span class="value" id="reverb-value">18%</span>
+        </div>
+
+        <button id="panic-btn" title="立即停止所有声音">■ 停止全部</button>
     </div>
 
     <div class="keyboard-wrapper">
         <div class="keyboard" id="keyboard-container"></div>
     </div>
+    <div class="status">按键支持：Z-M / Q-P / 数字键等 · 多音同时按下时自动限制峰值，避免刺耳爆音</div>
 
 <script>
     // 1. 全局状态
     let transposeOffset = 0; 
     let audioCtx = null;
-    const activeNotes = new Map(); 
+    const activeNotes = new Map();
+    let masterBus = null;
+    let compressor = null;
+    let masterGain = null;
+    let dryGain = null;
+    let wetGain = null;
+    let convolver = null;
+    let reverbBuffer = null;
+    let volumeLevel = 0.72;
+    let reverbLevel = 0.18; 
 
     // --- 动态生成移调下拉菜单 (扩展为上下各 3 个八度: -36 到 +36) ---
     const transposeSelect = document.getElementById('transpose');
@@ -209,10 +307,12 @@
     };
 
     const SYNTH_PARAMS = {
-        attack: 0.005,   
-        decay: 1.0,    
-        sustain: 0.8,  
-        release: 1.0,  
+        attack: 0.025,
+        decay: 0.35,
+        sustain: 0.68,
+        release: 0.75,
+        // 单音最大电平；和弦时交给 compressor 做最后保护
+        voiceGain: 0.22
     };
 
     // 3. 动态生成键盘 (MIDI 48 到 100)
@@ -264,12 +364,82 @@
             }
             kbContainer.appendChild(keyDiv);
 
-            keyDiv.addEventListener('mousedown', () => triggerNoteOn(midi));
-            keyDiv.addEventListener('mouseup', () => triggerNoteOff(midi));
-            keyDiv.addEventListener('mouseleave', () => triggerNoteOff(midi));
+            keyDiv.addEventListener('pointerdown', (e) => {
+                e.preventDefault();
+                keyDiv.setPointerCapture?.(e.pointerId);
+                triggerNoteOn(midi);
+            });
+            keyDiv.addEventListener('pointerup', () => triggerNoteOff(midi));
+            keyDiv.addEventListener('pointercancel', () => triggerNoteOff(midi));
+            keyDiv.addEventListener('lostpointercapture', () => triggerNoteOff(midi));
         }
     }
     buildVisualKeyboard();
+
+
+    // ===== 音频总线：所有声音先进入 compressor，再到输出 =====
+    function createImpulseResponse(ctx, duration = 2.2, decay = 2.6) {
+        const length = Math.floor(ctx.sampleRate * duration);
+        const impulse = ctx.createBuffer(2, length, ctx.sampleRate);
+        for (let ch = 0; ch < 2; ch++) {
+            const data = impulse.getChannelData(ch);
+            for (let i = 0; i < length; i++) {
+                const t = i / length;
+                data[i] = (Math.random() * 2 - 1) * Math.pow(1 - t, decay);
+            }
+        }
+        return impulse;
+    }
+
+    function setupAudioGraph() {
+        masterBus = audioCtx.createGain();
+        compressor = audioCtx.createDynamicsCompressor();
+
+        // 温和的“胶水压缩”：多个音同时响时自动压低峰值，显著减少刺耳/爆音
+        compressor.threshold.value = -18;
+        compressor.knee.value = 12;
+        compressor.ratio.value = 4;
+        compressor.attack.value = 0.008;
+        compressor.release.value = 0.18;
+
+        masterGain = audioCtx.createGain();
+        masterGain.gain.value = volumeLevel;
+
+        dryGain = audioCtx.createGain();
+        wetGain = audioCtx.createGain();
+        dryGain.gain.value = 0.9;
+        wetGain.gain.value = reverbLevel;
+
+        convolver = audioCtx.createConvolver();
+        reverbBuffer = createImpulseResponse(audioCtx);
+        convolver.buffer = reverbBuffer;
+
+        masterBus.connect(compressor);
+        compressor.connect(masterGain);
+        masterGain.connect(dryGain);
+        masterGain.connect(convolver);
+        convolver.connect(wetGain);
+
+        dryGain.connect(audioCtx.destination);
+        wetGain.connect(audioCtx.destination);
+    }
+
+    function updateVolume() {
+        if (masterGain) {
+            masterGain.gain.setTargetAtTime(volumeLevel, audioCtx.currentTime, 0.015);
+        }
+    }
+
+    function updateReverb() {
+        if (wetGain) {
+            wetGain.gain.setTargetAtTime(reverbLevel, audioCtx.currentTime, 0.03);
+        }
+    }
+
+    function stopAllNotes() {
+        if (!audioCtx) return;
+        for (const midi of [...activeNotes.keys()]) triggerNoteOff(midi);
+    }
 
     const startBtn = document.getElementById('start-btn');
     startBtn.addEventListener('click', async () => {
@@ -277,26 +447,36 @@
             audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         }
         if (audioCtx.state === 'suspended') await audioCtx.resume();
+        if (!masterBus) setupAudioGraph();
         startBtn.innerText = "✨ 梦幻引擎已激活";
         startBtn.disabled = true;
     });
 
     // 5. 核心发声与终止逻辑
     function triggerNoteOn(midi) {
-        if (!audioCtx || activeNotes.has(midi)) return;
-        
+        if (!audioCtx || !masterBus || activeNotes.has(midi)) return;
+
         const freq = midiToFreq(midi);
         const now = audioCtx.currentTime;
 
         const keyEl = document.getElementById(`midi-${midi}`);
         if (keyEl) keyEl.classList.add('active');
 
-        const masterGain = audioCtx.createGain();
-        masterGain.connect(audioCtx.destination);
-        masterGain.gain.setValueAtTime(0, now);
-        
-        masterGain.gain.linearRampToValueAtTime(1.0, now + SYNTH_PARAMS.attack);
-        masterGain.gain.setTargetAtTime(SYNTH_PARAMS.sustain, now + SYNTH_PARAMS.attack, SYNTH_PARAMS.decay);
+        // 每个音符独立衰减，再进入总线压缩器。
+        // 这里必须使用 voiceGain；原优化版漏掉了它的声明，
+        // 导致按键时 ReferenceError，从而“没有声音”。
+        const voiceGain = audioCtx.createGain();
+        voiceGain.connect(masterBus);
+        voiceGain.gain.setValueAtTime(0.0001, now);
+        voiceGain.gain.linearRampToValueAtTime(
+            SYNTH_PARAMS.voiceGain,
+            now + SYNTH_PARAMS.attack
+        );
+        voiceGain.gain.setTargetAtTime(
+            SYNTH_PARAMS.voiceGain * SYNTH_PARAMS.sustain,
+            now + SYNTH_PARAMS.attack,
+            SYNTH_PARAMS.decay
+        );
 
         const oscillators = [];
 
@@ -308,16 +488,16 @@
             osc.type = 'sine';
             osc.frequency.value = freq * ratio;
 
-            partialGain.gain.value = baseAmp;
+            partialGain.gain.value = baseAmp * 0.78;
 
             osc.connect(partialGain);
-            partialGain.connect(masterGain);
-            
+            partialGain.connect(voiceGain);
+
             osc.start(now);
             oscillators.push(osc);
         }
 
-        activeNotes.set(midi, { masterGain, oscillators });
+        activeNotes.set(midi, { voiceGain, oscillators });
     }
 
     function triggerNoteOff(midi) {
@@ -326,16 +506,38 @@
         const keyEl = document.getElementById(`midi-${midi}`);
         if (keyEl) keyEl.classList.remove('active');
 
-        const { masterGain, oscillators } = activeNotes.get(midi);
+        const { voiceGain, oscillators } = activeNotes.get(midi);
         const now = audioCtx.currentTime;
 
-        masterGain.gain.cancelScheduledValues(now);
-        masterGain.gain.setValueAtTime(masterGain.gain.value, now);
-        masterGain.gain.exponentialRampToValueAtTime(0.001, now + SYNTH_PARAMS.release);
+        voiceGain.gain.cancelScheduledValues(now);
+        voiceGain.gain.setValueAtTime(Math.max(voiceGain.gain.value, 0.0001), now);
+        voiceGain.gain.exponentialRampToValueAtTime(0.0001, now + SYNTH_PARAMS.release);
 
         oscillators.forEach(osc => osc.stop(now + SYNTH_PARAMS.release + 0.1));
         activeNotes.delete(midi);
     }
+
+
+    // ===== 参数控制 =====
+    const volumeEl = document.getElementById('volume');
+    const volumeValueEl = document.getElementById('volume-value');
+    const reverbEl = document.getElementById('reverb');
+    const reverbValueEl = document.getElementById('reverb-value');
+    const panicBtn = document.getElementById('panic-btn');
+
+    volumeEl.addEventListener('input', (e) => {
+        volumeLevel = parseFloat(e.target.value);
+        volumeValueEl.textContent = `${Math.round(volumeLevel * 100)}%`;
+        updateVolume();
+    });
+
+    reverbEl.addEventListener('input', (e) => {
+        reverbLevel = parseFloat(e.target.value);
+        reverbValueEl.textContent = `${Math.round(reverbLevel * 100)}%`;
+        updateReverb();
+    });
+
+    panicBtn.addEventListener('click', stopAllNotes);
 
     // 6. 键盘事件拦截 (完美集成左右八度切换)
     window.addEventListener('keydown', (e) => {
@@ -373,6 +575,12 @@
         if (midiCode !== undefined) {
             triggerNoteOff(midiCode);
         }
+    });
+
+    window.addEventListener('blur', stopAllNotes);
+    window.addEventListener('pointerup', () => {
+        // 在页面外松开也释放音符，避免出现“卡住一直响”
+        for (const midi of [...activeNotes.keys()]) triggerNoteOff(midi);
     });
 
 </script>
