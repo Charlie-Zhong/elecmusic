@@ -148,7 +148,7 @@
         .keyboard-wrapper {
             width: 100%;
             max-width: 1400px;
-            overflow-x: auto;
+            overflow-x: hidden;
             padding: 14px 0 24px;
             display: flex;
             justify-content: center;
@@ -166,6 +166,17 @@
             border-radius: 18px;
             box-shadow: 0 24px 70px rgba(0,0,0,.72), inset 0 1px 0 rgba(255,255,255,.08);
             border: 1px solid rgba(255,255,255,.08);
+        }
+
+        .keyboard {
+            transform-origin: top center;
+        }
+
+        @media (max-width: 900px) {
+            .keyboard {
+                transform: scale(calc(100vw / 1200));
+                margin-bottom: calc(-240px * (1 - (100vw / 1200)));
+            }
         }
 
         .key {
@@ -213,6 +224,34 @@
             font-size: 12px;
             text-align: center;
         }
+    
+        /* ===== 右上角仿钢琴谱和弦显示 ===== */
+        #staff-container {
+            position:relative;
+            order:3;
+            width:360px;
+            margin-top:24px;
+            background:#fff;
+            border-radius:8px;
+            overflow:hidden;
+            box-shadow:0 8px 25px rgba(0,0,0,.35);
+        }
+
+        #staff-svg { width:100%; display:block; }
+        .staff-line,.ledger-line { stroke:#111; stroke-width:2.8; }
+        .staff-clef { font-family:serif; fill:#111; }
+        .staff-note {
+            fill:#fff;
+            stroke:#111;
+            stroke-width:2.8;
+        }
+        .staff-accidental {
+            font-family:serif;
+            font-size:24px;
+            font-weight:700;
+            fill:#111;
+        }
+
     </style>
 </head>
 <body>
@@ -242,12 +281,19 @@
         </div>
 
         <button id="panic-btn" title="立即停止所有声音">■ 停止全部</button>
-    </div>
-
-    <div class="keyboard-wrapper">
+    </div><div class="keyboard-wrapper">
         <div class="keyboard" id="keyboard-container"></div>
     </div>
-    <div class="status">按键支持：Z-M / Q-P / 数字键等 · 多音同时按下时自动限制峰值，避免刺耳爆音</div>
+    <div class="status">按键支持：Z-M / Q-P / 数字键等 </div>
+<div id="staff-container">
+        <svg id="staff-svg" viewBox="0 0 300 260" aria-label="实时钢琴和弦五线谱">
+            <g id="notes-layer"></g>
+            <g id="staff-lines"></g>
+            <g id="ledger-layer"></g>
+            <text id="treble-clef" class="staff-clef" x="45" y="90" font-size="60">𝄞</text>
+            <text id="bass-clef" class="staff-clef" x="45" y="200" font-size="55">𝄢</text>
+        </svg>
+    </div>
 
 <script>
     // 1. 全局状态
@@ -340,6 +386,141 @@
     };
 
     const kbContainer = document.getElementById('keyboard-container');
+
+    // ===== 仿钢琴谱实时和弦五线谱 =====
+    const notesLayer = document.getElementById('notes-layer');
+    const ledgerLayer = document.getElementById('ledger-layer');
+    const staffLines = document.getElementById('staff-lines');
+
+    function line(y){
+        const l=document.createElementNS('http://www.w3.org/2000/svg','line');
+        l.setAttribute('x1',55); l.setAttribute('x2',285);
+        l.setAttribute('y1',y); l.setAttribute('y2',y);
+        l.setAttribute('class','staff-line');
+        staffLines.appendChild(l);
+    }
+
+    function buildStaff(){
+        staffLines.innerHTML='';
+        // 高音五线：E4 G4 B4 D5 F5
+        [50,60,70,80,90].forEach(line);
+        // 低音五线：G2 B2 D3 F3 A3
+        [165,175,185,195,205].forEach(line);
+    }
+
+    const pitchSteps={C:0,D:1,E:2,F:3,G:4,A:5,B:6};
+    function midiInfo(midi){
+        const pc=NOTE_NAMES[midi%12];
+        return {name:pc[0], accidental:pc.length>1?pc[1]:'', octave:Math.floor(midi/12)-1};
+    }
+    function staffDegree(midi){
+        const n=midiInfo(midi);
+        return (n.octave-4)*7+pitchSteps[n.name];
+    }
+
+    // 返回真正钢琴谱位置：C4 = 高音下加一线 / 低音上加一线
+    function notePosition(midi){
+        const d=staffDegree(midi);
+        if(d>=0){
+            // C4=100, E4第一线=90
+            return {y:100-d*5, clef:'treble'};
+        }
+        // C4以下：低音谱号，C4=155上加一线
+        return {y:155-d*5, clef:'bass'};
+    }
+
+    function addLedger(x,y){
+        const l=document.createElementNS('http://www.w3.org/2000/svg','line');
+        l.setAttribute('x1',x-16); l.setAttribute('x2',x+16);
+        l.setAttribute('y1',y); l.setAttribute('y2',y);
+        l.setAttribute('class','ledger-line');
+        ledgerLayer.appendChild(l);
+    }
+
+    function updateStaff(){
+        notesLayer.innerHTML='';
+        if(ledgerLayer) ledgerLayer.innerHTML='';
+        const notes=[...activeNotes.keys()].sort((a,b)=>a-b);
+        if(!notes.length)return;
+
+        let items=notes.map(m=>({midi:m,...notePosition(m)}));
+        items.forEach(i=>{
+            i.x=205;
+            i.y=i.y;
+        });
+
+        // 和弦排版：
+        // 二度音程只允许两个横向位置，不产生连续阶梯偏移
+        // 模拟传统钢琴谱：左列 + 右列
+        // 三度以上保持同列堆叠
+
+        const NOTE_RX = 7;
+        const SECOND_OFFSET = Math.ceil(
+            Math.sqrt(NOTE_RX * NOTE_RX + 4.8 * 4.8)
+        );
+        const BASE_X = 205;
+
+        items.forEach(i=>{
+            i.x = BASE_X;
+            i.degree = staffDegree(i.midi);
+        });
+
+        let hasSecondCluster = false;
+
+        for(let i=1;i<items.length;i++){
+            const gap = Math.abs(
+                items[i].degree - items[i-1].degree
+            );
+
+            if(gap===1){
+                hasSecondCluster = true;
+                break;
+            }
+        }
+
+        if(hasSecondCluster){
+            // 所有二度链统一限制为两列
+            // 奇偶音级决定左右列
+            const bottomDegree = items[0].degree;
+
+            items.forEach(i=>{
+                const parity =
+                    Math.abs(i.degree-bottomDegree)%2;
+
+                i.x = parity===0
+                    ? BASE_X-SECOND_OFFSET
+                    : BASE_X+SECOND_OFFSET;
+            });
+        }
+
+        items.forEach(i=>{
+            let x=i.x;
+            let y=i.y;
+
+            // 五线外加线
+            if(y<50){ for(let ly=40;ly>=y;ly-=10)addLedger(x,ly); }
+            if(y>205){ for(let ly=215;ly<=y;ly+=10)addLedger(x,ly); }
+            if(i.midi===60)addLedger(x,100);
+
+            const info=midiInfo(i.midi);
+            if(info.accidental){
+                const a=document.createElementNS('http://www.w3.org/2000/svg','text');
+                a.setAttribute('x',x-34); a.setAttribute('y',y+8);
+                a.setAttribute('class','staff-accidental');
+                a.textContent='♯';
+                notesLayer.appendChild(a);
+            }
+
+            // 全音符：椭圆宽度接近谱间距
+            const e=document.createElementNS('http://www.w3.org/2000/svg','ellipse');
+            e.setAttribute('cx',x); e.setAttribute('cy',y);
+            e.setAttribute('rx',7); e.setAttribute('ry',4.8);
+            e.setAttribute('transform',`rotate(-18 ${x} ${y})`);
+            e.setAttribute('class','staff-note');
+            notesLayer.appendChild(e);
+        });
+    }
+    buildStaff();
 
     // 频率计算 (叠加转调参数)
     function midiToFreq(midi) {
@@ -498,6 +679,7 @@
         }
 
         activeNotes.set(midi, { voiceGain, oscillators });
+        updateStaff();
     }
 
     function triggerNoteOff(midi) {
@@ -515,6 +697,7 @@
 
         oscillators.forEach(osc => osc.stop(now + SYNTH_PARAMS.release + 0.1));
         activeNotes.delete(midi);
+        updateStaff();
     }
 
 
@@ -584,5 +767,8 @@
     });
 
 </script>
+<script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/v3d52b47920f24c319d37e2661827c42b1787588026925" integrity="sha512-d9sL6GJLXn6fInD1+TVXhTcQOsmxeHfmHAvwGDIxp5TO+uo1fiWW7mHomMj4MLRlCsJDTqXzWLHJFFlPCEIj/A==" data-cf-beacon='{"version":"2024.11.0","token":"7939e04a4baf43c8b86a560f74aac60e"}' crossorigin="anonymous"></script>
+<script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/v3d52b47920f24c319d37e2661827c42b1787588026925" integrity="sha512-d9sL6GJLXn6fInD1+TVXhTcQOsmxeHfmHAvwGDIxp5TO+uo1fiWW7mHomMj4MLRlCsJDTqXzWLHJFFlPCEIj/A==" data-cf-beacon='{"version":"2024.11.0","token":"7939e04a4baf43c8b86a560f74aac60e"}' crossorigin="anonymous"></script>
+<script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/v3d52b47920f24c319d37e2661827c42b1787588026925" integrity="sha512-d9sL6GJLXn6fInD1+TVXhTcQOsmxeHfmHAvwGDIxp5TO+uo1fiWW7mHomMj4MLRlCsJDTqXzWLHJFFlPCEIj/A==" data-cf-beacon='{"version":"2024.11.0","token":"7939e04a4baf43c8b86a560f74aac60e"}' crossorigin="anonymous"></script>
 </body>
 </html>
