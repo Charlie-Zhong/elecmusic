@@ -289,7 +289,7 @@
         <svg id="staff-svg" viewBox="0 0 300 260" aria-label="实时钢琴和弦五线谱">
             <g id="notes-layer"></g>
             <g id="staff-lines"></g>
-            <g id="ledger-layer"></g>
+            <g id="ledger-layer"></g> 
             <text id="treble-clef" class="staff-clef" x="45" y="90" font-size="60">𝄞</text>
             <text id="bass-clef" class="staff-clef" x="45" y="200" font-size="55">𝄢</text>
         </svg>
@@ -332,6 +332,7 @@
 
     transposeSelect.addEventListener('change', (e) => {
         transposeOffset = parseInt(e.target.value, 10);
+        updateStaff();
     });
 
     // 快捷转调/八度切换函数
@@ -341,6 +342,7 @@
         if (newVal >= -36 && newVal <= 36) {
             transposeOffset = newVal;
             transposeSelect.value = transposeOffset; // 实时同步下拉框 UI
+            updateStaff();
         }
     }
 
@@ -394,7 +396,7 @@
 
     function line(y){
         const l=document.createElementNS('http://www.w3.org/2000/svg','line');
-        l.setAttribute('x1',55); l.setAttribute('x2',285);
+        l.setAttribute('x1',50); l.setAttribute('x2',255);//五线谱例位置
         l.setAttribute('y1',y); l.setAttribute('y2',y);
         l.setAttribute('class','staff-line');
         staffLines.appendChild(l);
@@ -443,7 +445,15 @@
         const notes=[...activeNotes.keys()].sort((a,b)=>a-b);
         if(!notes.length)return;
 
-        let items=notes.map(m=>({midi:m,...notePosition(m)}));
+        // 五线谱显示跟随移调，键盘实际按键位置保持不变
+        let items=notes.map(m=>{
+            const displayMidi = m + transposeOffset;
+            return {
+                midi: displayMidi,
+                sourceMidi: m,
+                ...notePosition(displayMidi)
+            };
+        });
         items.forEach(i=>{
             i.x=205;
             i.y=i.y;
@@ -456,9 +466,9 @@
 
         const NOTE_RX = 7;
         const SECOND_OFFSET = Math.ceil(
-            Math.sqrt(NOTE_RX * NOTE_RX + 4.8 * 4.8)
+            Math.sqrt(NOTE_RX * NOTE_RX + 6.5)
         );
-        const BASE_X = 205;
+        const BASE_X = 170;//和弦音符位置
 
         items.forEach(i=>{
             i.x = BASE_X;
@@ -770,5 +780,6 @@
 <script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/v3d52b47920f24c319d37e2661827c42b1787588026925" integrity="sha512-d9sL6GJLXn6fInD1+TVXhTcQOsmxeHfmHAvwGDIxp5TO+uo1fiWW7mHomMj4MLRlCsJDTqXzWLHJFFlPCEIj/A==" data-cf-beacon='{"version":"2024.11.0","token":"7939e04a4baf43c8b86a560f74aac60e"}' crossorigin="anonymous"></script>
 <script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/v3d52b47920f24c319d37e2661827c42b1787588026925" integrity="sha512-d9sL6GJLXn6fInD1+TVXhTcQOsmxeHfmHAvwGDIxp5TO+uo1fiWW7mHomMj4MLRlCsJDTqXzWLHJFFlPCEIj/A==" data-cf-beacon='{"version":"2024.11.0","token":"7939e04a4baf43c8b86a560f74aac60e"}' crossorigin="anonymous"></script>
 <script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/v3d52b47920f24c319d37e2661827c42b1787588026925" integrity="sha512-d9sL6GJLXn6fInD1+TVXhTcQOsmxeHfmHAvwGDIxp5TO+uo1fiWW7mHomMj4MLRlCsJDTqXzWLHJFFlPCEIj/A==" data-cf-beacon='{"version":"2024.11.0","token":"7939e04a4baf43c8b86a560f74aac60e"}' crossorigin="anonymous"></script>
+<script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/v31edd6df95cf4e85bb4c19e7a9bdbcba1788362987495" integrity="sha512-iIg7k2xntmwu6/uSb5tpc/hySgZc4eoL31yB29W6tJFo2akwjPWcEqnCEdJvGexCL0KEQwVYv5BlowfhVz26hg==" data-cf-beacon='{"version":"2024.11.0","token":"7939e04a4baf43c8b86a560f74aac60e","spa":2}' crossorigin="anonymous"></script>
 </body>
 </html>
