@@ -251,6 +251,43 @@
             font-weight:700;
             fill:#111;
         }
+        .staff-header {
+            display:flex;
+            align-items:center;
+            justify-content:space-between;
+            gap:10px;
+            padding:10px 12px 8px;
+            border-bottom:1px solid #e6e6ee;
+            color:#151522;
+            background:#fafafe;
+        }
+        #chord-name {
+            min-width:0;
+            font-size:20px;
+            line-height:1.1;
+            font-weight:800;
+            letter-spacing:.01em;
+            white-space:nowrap;
+            overflow:hidden;
+            text-overflow:ellipsis;
+        }
+        .spelling-control {
+            display:flex;
+            align-items:center;
+            gap:6px;
+            color:#6b6b7e;
+            font-size:11px;
+            font-weight:700;
+            white-space:nowrap;
+        }
+        #spelling-mode {
+            padding:5px 7px;
+            font-size:12px;
+            color:#4f46c8;
+            background:#fff;
+            border:1px solid #d3d4df;
+            border-radius:6px;
+        }
 
     </style>
 </head>
@@ -286,6 +323,17 @@
     </div>
     <div class="status">按键支持：Z-M / Q-P / 数字键等 </div>
 <div id="staff-container">
+        <div class="staff-header">
+            <div id="chord-name">—</div>
+            <label class="spelling-control">
+                拼写
+                <select id="spelling-mode" aria-label="五线谱升降号拼写模式">
+                    <option value="auto" selected>自动</option>
+                    <option value="sharp">♯ 升号</option>
+                    <option value="flat">♭ 降号</option>
+                </select>
+            </label>
+        </div>
         <svg id="staff-svg" viewBox="0 0 300 260" aria-label="实时钢琴和弦五线谱">
             <g id="notes-layer"></g>
             <g id="staff-lines"></g>
@@ -330,9 +378,43 @@
         transposeSelect.appendChild(opt);
     }
 
+    // 让可视钢琴高亮始终表示“移调后的实际发声音高”，而不是原始输入键位。
+    function updateActiveKeyHighlights() {
+        kbContainer.querySelectorAll('.key.active').forEach(key => key.classList.remove('active'));
+
+        for (const sourceMidi of activeNotes.keys()) {
+            const displayMidi = sourceMidi + transposeOffset;
+            const keyEl = document.getElementById(`midi-${displayMidi}`);
+            if (keyEl) keyEl.classList.add('active');
+        }
+    }
+
+    // 当移调发生时，已经按住的声音也平滑移动到新音高，
+    // 使声音、钢琴高亮和五线谱三者保持同步。
+    function retuneActiveNotes() {
+        if (!audioCtx) return;
+        const ratios = Object.keys(DREAM_TIMBRE).map(Number);
+        const now = audioCtx.currentTime;
+
+        for (const [sourceMidi, voice] of activeNotes.entries()) {
+            const baseFreq = 440 * Math.pow(2, ((sourceMidi + transposeOffset) - 69) / 12);
+            voice.oscillators.forEach((osc, index) => {
+                const ratio = ratios[index] ?? 1;
+                osc.frequency.cancelScheduledValues(now);
+                osc.frequency.setTargetAtTime(baseFreq * ratio, now, 0.015);
+            });
+        }
+    }
+
+    function syncTransposeViewAndSound() {
+        retuneActiveNotes();
+        updateActiveKeyHighlights();
+        updateStaff();
+    }
+
     transposeSelect.addEventListener('change', (e) => {
         transposeOffset = parseInt(e.target.value, 10);
-        updateStaff();
+        syncTransposeViewAndSound();
     });
 
     // 快捷转调/八度切换函数
@@ -342,25 +424,34 @@
         if (newVal >= -36 && newVal <= 36) {
             transposeOffset = newVal;
             transposeSelect.value = transposeOffset; // 实时同步下拉框 UI
-            updateStaff();
+            syncTransposeViewAndSound();
         }
     }
 
     // 2. 物理建模参数: 梦幻氛围音色 (Ambient Pad)
     const DREAM_TIMBRE = {
-        1.000: 0.30,   
-        2.000: 0.45, 
-        3.000: 0.15,
-        4.000: 0.05
-    };
+    1.000: 0.18,
+    2.000: 0.12,
+    3.000: 0.18,
+    4.000: 0.10,
+    5.000: 0.12,
+
+    6.000: 0.08,
+    7.000: 0.06,
+    8.000: 0.05,
+    10.000: 0.04,
+    12.000: 0.035,
+    15.000: 0.025,
+    18.000: 0.015
+};
 
     const SYNTH_PARAMS = {
-        attack: 0.025,
+        attack: 0.003,
         decay: 0.35,
-        sustain: 0.68,
-        release: 0.75,
+        sustain: 0.2,
+        release: 1.0,
         // 单音最大电平；和弦时交给 compressor 做最后保护
-        voiceGain: 0.22
+        voiceGain: 0.18
     };
 
     // 3. 动态生成键盘 (MIDI 48 到 100)
@@ -410,25 +501,236 @@
         [165,175,185,195,205].forEach(line);
     }
 
-    const pitchSteps={C:0,D:1,E:2,F:3,G:4,A:5,B:6};
-    function midiInfo(midi){
-        const pc=NOTE_NAMES[midi%12];
-        return {name:pc[0], accidental:pc.length>1?pc[1]:'', octave:Math.floor(midi/12)-1};
+    const pitchSteps = {C:0,D:1,E:2,F:3,G:4,A:5,B:6};
+    const LETTERS = ['C','D','E','F','G','A','B'];
+    const NATURAL_PC = {C:0,D:2,E:4,F:5,G:7,A:9,B:11};
+    const SHARP_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+    const FLAT_NAMES  = ['C','Db','D','Eb','E','F','Gb','G','Ab','A','Bb','B'];
+    const AUTO_ROOT_NAMES = ['C','C#','D','Eb','E','F','F#','G','Ab','A','Bb','B'];
+
+    // intervals: 相对根音的半音；degrees: 该音在和弦中的字母级数。
+    // required: 判断和弦身份必须出现的音；optional: 爵士配器里常被省略的音。
+    // allowRootOmit: 允许无根音 voicing，但会降低根音候选优先级，避免过度推断。
+    const CHORD_PATTERNS = [
+        // ===== 扩展和弦：先匹配信息量更高的名字 =====
+        {intervals:[0,2,4,7,9,11], degrees:[0,1,2,4,5,6], required:[0,4,9,11], optional:[2,7], suffix:'maj13', priority:52, allowRootOmit:true, minUnique:3},
+        {intervals:[0,2,4,7,9,10], degrees:[0,1,2,4,5,6], required:[0,4,9,10], optional:[2,7], suffix:'13', priority:52, allowRootOmit:true, minUnique:3},
+        {intervals:[0,2,3,7,9,10], degrees:[0,1,2,4,5,6], required:[0,3,9,10], optional:[2,7], suffix:'m13', priority:52, allowRootOmit:true, minUnique:3},
+
+        {intervals:[0,2,4,5,7,10], degrees:[0,1,2,3,4,6], required:[0,5,10], optional:[2,4,7], suffix:'11', priority:48, allowRootOmit:true, minUnique:4},
+        {intervals:[0,2,3,5,7,10], degrees:[0,1,2,3,4,6], required:[0,3,5,10], optional:[2,7], suffix:'m11', priority:49, allowRootOmit:true, minUnique:4},
+
+        {intervals:[0,1,4,7,10], degrees:[0,1,2,4,6], required:[0,1,4,10], optional:[7], suffix:'7(♭9)', priority:50, allowRootOmit:true, minUnique:3},
+        {intervals:[0,3,4,7,10], degrees:[0,1,2,4,6], required:[0,3,4,10], optional:[7], suffix:'7(♯9)', priority:50, allowRootOmit:true, minUnique:3},
+        {intervals:[0,2,4,6,7,10], degrees:[0,1,2,3,4,6], required:[0,4,6,10], optional:[2,7], suffix:'7(♯11)', priority:50, allowRootOmit:true, minUnique:3},
+        {intervals:[0,2,4,7,8,10], degrees:[0,1,2,4,5,6], required:[0,4,8,10], optional:[2,7], suffix:'7(♭13)', priority:50, allowRootOmit:true, minUnique:3},
+        {intervals:[0,4,6,10], degrees:[0,2,4,6], required:[0,4,6,10], optional:[], suffix:'7(♭5)', priority:46, allowRootOmit:false, minUnique:4},
+        {intervals:[0,4,8,10], degrees:[0,2,4,6], required:[0,4,8,10], optional:[], suffix:'7(♯5)', priority:46, allowRootOmit:false, minUnique:4},
+
+        {intervals:[0,2,4,7,11], degrees:[0,1,2,4,6], required:[0,2,4,11], optional:[7], suffix:'maj9', priority:44, allowRootOmit:true, minUnique:3},
+        {intervals:[0,2,4,7,10], degrees:[0,1,2,4,6], required:[0,2,4,10], optional:[7], suffix:'9', priority:44, allowRootOmit:true, minUnique:3},
+        {intervals:[0,2,3,7,10], degrees:[0,1,2,4,6], required:[0,2,3,10], optional:[7], suffix:'m9', priority:44, allowRootOmit:true, minUnique:3},
+        {intervals:[0,2,3,7,11], degrees:[0,1,2,4,6], required:[0,2,3,11], optional:[7], suffix:'m(maj9)', priority:44, allowRootOmit:true, minUnique:3},
+
+        // ===== 七和弦 / 六和弦：五度允许省略 =====
+        {intervals:[0,4,7,11], degrees:[0,2,4,6], required:[0,4,11], optional:[7], suffix:'maj7', priority:36, allowRootOmit:true, minUnique:3},
+        {intervals:[0,4,7,10], degrees:[0,2,4,6], required:[0,4,10], optional:[7], suffix:'7', priority:36, allowRootOmit:true, minUnique:3},
+        {intervals:[0,3,7,10], degrees:[0,2,4,6], required:[0,3,10], optional:[7], suffix:'m7', priority:36, allowRootOmit:true, minUnique:3},
+        {intervals:[0,5,7,10], degrees:[0,3,4,6], required:[0,5,10], optional:[7], suffix:'7sus4', priority:37, allowRootOmit:false, minUnique:3},
+        {intervals:[0,3,6,10], degrees:[0,2,4,6], required:[0,3,6,10], optional:[], suffix:'m7♭5', priority:39, allowRootOmit:true, minUnique:4},
+        {intervals:[0,3,6,9], degrees:[0,2,4,6], required:[0,3,6,9], optional:[], suffix:'dim7', priority:39, allowRootOmit:false, minUnique:4},
+        {intervals:[0,3,7,11], degrees:[0,2,4,6], required:[0,3,11], optional:[7], suffix:'m(maj7)', priority:38, allowRootOmit:true, minUnique:3},
+        {intervals:[0,4,7,9], degrees:[0,2,4,5], required:[0,4,9], optional:[7], suffix:'6', priority:36, allowRootOmit:false, minUnique:3},
+        {intervals:[0,3,7,9], degrees:[0,2,4,5], required:[0,3,9], optional:[7], suffix:'m6', priority:36, allowRootOmit:false, minUnique:3},
+        {intervals:[0,2,4,7,9], degrees:[0,1,2,4,5], required:[0,2,4,9], optional:[7], suffix:'6/9', priority:40, allowRootOmit:false, minUnique:4},
+
+        // ===== 三和弦 / add 和弦 =====
+        {intervals:[0,2,4,7], degrees:[0,1,2,4], required:[0,2,4], optional:[7], suffix:'add9', priority:31, allowRootOmit:false, minUnique:3},
+        {intervals:[0,2,3,7], degrees:[0,1,2,4], required:[0,2,3], optional:[7], suffix:'m(add9)', priority:31, allowRootOmit:false, minUnique:3},
+        {intervals:[0,4,7], degrees:[0,2,4], required:[0,4], optional:[7], suffix:'', priority:26, allowRootOmit:false, minUnique:2},
+        {intervals:[0,3,7], degrees:[0,2,4], required:[0,3], optional:[7], suffix:'m', priority:26, allowRootOmit:false, minUnique:2},
+        {intervals:[0,3,6], degrees:[0,2,4], required:[0,3,6], optional:[], suffix:'dim', priority:28, allowRootOmit:false, minUnique:3},
+        {intervals:[0,4,8], degrees:[0,2,4], required:[0,4,8], optional:[], suffix:'aug', priority:28, allowRootOmit:false, minUnique:3},
+        {intervals:[0,2,7], degrees:[0,1,4], required:[0,2,7], optional:[], suffix:'sus2', priority:27, allowRootOmit:false, minUnique:3},
+        {intervals:[0,5,7], degrees:[0,3,4], required:[0,5,7], optional:[], suffix:'sus4', priority:27, allowRootOmit:false, minUnique:3},
+        {intervals:[0,7], degrees:[0,4], required:[0,7], optional:[], suffix:'5', priority:18, allowRootOmit:false, minUnique:2}
+    ];
+
+    const chordNameEl = document.getElementById('chord-name');
+    const spellingModeEl = document.getElementById('spelling-mode');
+    let spellingMode = 'auto';
+
+    spellingModeEl.addEventListener('change', (e) => {
+        spellingMode = e.target.value;
+        updateStaff();
+    });
+
+    function mod12(n){ return ((n % 12) + 12) % 12; }
+
+    function parseSpelling(name){
+        return {letter:name[0], accidental:name.slice(1)};
     }
-    function staffDegree(midi){
-        const n=midiInfo(midi);
-        return (n.octave-4)*7+pitchSteps[n.name];
+
+    function accidentalOffset(acc){
+        if(acc === '#') return 1;
+        if(acc === '##') return 2;
+        if(acc === 'b') return -1;
+        if(acc === 'bb') return -2;
+        return 0;
+    }
+
+    function accidentalGlyph(acc){
+        return acc.replace(/##/g,'𝄪').replace(/bb/g,'𝄫').replace(/#/g,'♯').replace(/b/g,'♭');
+    }
+
+    function unicodeNoteName(name){
+        return name.replace(/#/g,'♯').replace(/b/g,'♭');
+    }
+
+    function analyzeChord(midis){
+        if(!midis.length) return null;
+
+        // 不同八度的重复音只计一次；最低实际 MIDI 音决定 slash chord 的低音。
+        const pcs = [...new Set(midis.map(m => mod12(m)))].sort((a,b)=>a-b);
+        const bassPc = mod12(Math.min(...midis));
+        const candidates = [];
+
+        // 根音不一定实际弹出（爵士无根音 voicing），所以评估全部 12 个音级。
+        for(let rootPc = 0; rootPc < 12; rootPc++){
+            const rel = pcs.map(pc => mod12(pc-rootPc)).sort((a,b)=>a-b);
+            const relSet = new Set(rel);
+            const rootPresent = relSet.has(0);
+            const bassInterval = mod12(bassPc-rootPc);
+
+            for(const pattern of CHORD_PATTERNS){
+                const expected = new Set(pattern.intervals);
+                const required = pattern.required || pattern.intervals;
+                const minUnique = pattern.minUnique || Math.min(3, pattern.intervals.length);
+
+                if(relSet.size < minUnique) continue;
+                if(!rootPresent && !pattern.allowRootOmit) continue;
+
+                // 名字必须解释所有实际按下的 pitch class；否则宁可尝试另一个和弦。
+                const extras = rel.filter(i => !expected.has(i));
+                if(extras.length) continue;
+
+                // required 中只有根音允许在 rootless voicing 中缺席。
+                let requiredMissing = false;
+                for(const interval of required){
+                    if(interval === 0 && !rootPresent && pattern.allowRootOmit) continue;
+                    if(!relSet.has(interval)){
+                        requiredMissing = true;
+                        break;
+                    }
+                }
+                if(requiredMissing) continue;
+
+                const matchedIntervals = pattern.intervals.filter(i => relSet.has(i));
+                const omittedIntervals = pattern.intervals.filter(i => !relSet.has(i));
+                const exact = omittedIntervals.length === 0;
+                const bassIsRoot = bassPc === rootPc;
+                const bassIsChordTone = expected.has(bassInterval);
+
+                // 根音推断优先级：
+                // 1) 完整/高信息量和弦；2) 实际出现根音；3) 最低音就是根音；
+                // 4) 少省略音；5) rootless 仅在 guide tones 足够时成立。
+                let score = pattern.priority || 0;
+                score += matchedIntervals.length * 5;
+                score -= omittedIntervals.length * 1.35;
+                if(exact) score += 8;
+                score += rootPresent ? 6 : -5;
+                if(bassIsRoot) score += 12;
+                else if(bassIsChordTone) score += 1.5;
+
+                candidates.push({
+                    rootPc,
+                    bassPc,
+                    pattern,
+                    pcs,
+                    score,
+                    exact,
+                    rootPresent,
+                    bassIsRoot,
+                    omittedIntervals
+                });
+            }
+        }
+
+        if(!candidates.length){
+            return {rootPc:null, bassPc, pattern:null, pcs, score:null, omittedIntervals:[]};
+        }
+
+        candidates.sort((a,b) =>
+            (b.score - a.score) ||
+            (Number(b.rootPresent) - Number(a.rootPresent)) ||
+            (Number(b.bassIsRoot) - Number(a.bassIsRoot)) ||
+            (a.omittedIntervals.length - b.omittedIntervals.length) ||
+            ((b.pattern.priority || 0) - (a.pattern.priority || 0)) ||
+            (a.rootPc - b.rootPc)
+        );
+
+        return candidates[0];
+    }
+
+    function accidentalForPitch(targetPc, naturalPc){
+        let delta = mod12(targetPc - naturalPc);
+        if(delta > 6) delta -= 12;
+        if(delta === 1) return '#';
+        if(delta === 2) return '##';
+        if(delta === -1) return 'b';
+        if(delta === -2) return 'bb';
+        return '';
+    }
+
+    function buildAutoChordSpellings(analysis){
+        const map = new Map();
+        if(!analysis?.pattern || analysis.rootPc === null) return map;
+
+        const rootName = AUTO_ROOT_NAMES[analysis.rootPc];
+        const root = parseSpelling(rootName);
+        const rootLetterIndex = LETTERS.indexOf(root.letter);
+
+        analysis.pattern.intervals.forEach((interval, idx) => {
+            const targetPc = mod12(analysis.rootPc + interval);
+            const letter = LETTERS[(rootLetterIndex + analysis.pattern.degrees[idx]) % 7];
+            const accidental = accidentalForPitch(targetPc, NATURAL_PC[letter]);
+            map.set(targetPc, letter + accidental);
+        });
+        return map;
+    }
+
+    function spellingForPc(pc, analysis, autoMap){
+        pc = mod12(pc);
+        if(spellingMode === 'sharp') return SHARP_NAMES[pc];
+        if(spellingMode === 'flat') return FLAT_NAMES[pc];
+        if(autoMap?.has(pc)) return autoMap.get(pc);
+        return AUTO_ROOT_NAMES[pc];
+    }
+
+    function midiInfo(midi, analysis=null, autoMap=null){
+        const spelling = spellingForPc(mod12(midi), analysis, autoMap);
+        const {letter:name, accidental} = parseSpelling(spelling);
+        const semitone = NATURAL_PC[name] + accidentalOffset(accidental);
+        const octave = Math.round((midi - semitone) / 12) - 1;
+        return {name, accidental, octave, spelling};
+    }
+
+    function staffDegreeFromInfo(n){
+        return (n.octave-4)*7 + pitchSteps[n.name];
+    }
+
+    function staffDegree(midi, analysis=null, autoMap=null){
+        return staffDegreeFromInfo(midiInfo(midi, analysis, autoMap));
     }
 
     // 返回真正钢琴谱位置：C4 = 高音下加一线 / 低音上加一线
-    function notePosition(midi){
-        const d=staffDegree(midi);
+    function notePosition(midi, analysis=null, autoMap=null){
+        const info = midiInfo(midi, analysis, autoMap);
+        const d = staffDegreeFromInfo(info);
         if(d>=0){
-            // C4=100, E4第一线=90
-            return {y:100-d*5, clef:'treble'};
+            return {y:100-d*5, clef:'treble', info, degree:d};
         }
-        // C4以下：低音谱号，C4=155上加一线
-        return {y:155-d*5, clef:'bass'};
+        return {y:155-d*5, clef:'bass', info, degree:d};
     }
 
     function addLedger(x,y){
@@ -439,89 +741,108 @@
         ledgerLayer.appendChild(l);
     }
 
+    function applyLocalSecondCollision(items, baseX, offset){
+        // 只处理真正发生二度碰撞的局部连续链；其余音符保持在基准列。
+        for(const clef of ['treble','bass']){
+            const group = items.filter(i => i.clef === clef).sort((a,b)=>a.degree-b.degree);
+            let start = 0;
+            while(start < group.length){
+                let end = start;
+                while(end + 1 < group.length && group[end+1].degree - group[end].degree === 1){
+                    end++;
+                }
+                if(end > start){
+                    for(let k=start;k<=end;k++){
+                        group[k].x = baseX + ((k-start)%2 ? offset : -offset);
+                    }
+                }
+                start = end + 1;
+            }
+        }
+    }
+
+    function assignAccidentalLanes(items, baseX){
+        // 同一竖向范围内的临时记号分配到不同“车道”，避免 ♯/♭ 互相覆盖。
+        const accidentalItems = items
+            .filter(i => i.info.accidental)
+            .sort((a,b)=>a.y-b.y);
+        const laneLastY = [];
+        const MIN_GAP = 19;
+
+        accidentalItems.forEach(item => {
+            let lane = 0;
+            while(lane < laneLastY.length && Math.abs(item.y - laneLastY[lane]) < MIN_GAP){
+                lane++;
+            }
+            laneLastY[lane] = item.y;
+            item.accidentalX = baseX - 28 - lane * 16;
+        });
+    }
+
+    function chordLabel(analysis, autoMap){
+        if(!analysis) return '—';
+        if(analysis.pattern && analysis.rootPc !== null){
+            const root = spellingForPc(analysis.rootPc, analysis, autoMap);
+            let label = unicodeNoteName(root) + analysis.pattern.suffix;
+            if(analysis.bassPc !== analysis.rootPc){
+                label += '/' + unicodeNoteName(spellingForPc(analysis.bassPc, analysis, autoMap));
+            }
+            return label;
+        }
+        if(analysis.pcs.length === 1){
+            return unicodeNoteName(spellingForPc(analysis.pcs[0], analysis, autoMap));
+        }
+        return analysis.pcs
+            .map(pc => unicodeNoteName(spellingForPc(pc, analysis, autoMap)))
+            .join(' · ');
+    }
+
     function updateStaff(){
         notesLayer.innerHTML='';
         if(ledgerLayer) ledgerLayer.innerHTML='';
-        const notes=[...activeNotes.keys()].sort((a,b)=>a-b);
-        if(!notes.length)return;
 
-        // 五线谱显示跟随移调，键盘实际按键位置保持不变
-        let items=notes.map(m=>{
-            const displayMidi = m + transposeOffset;
+        const sourceNotes=[...activeNotes.keys()].sort((a,b)=>a-b);
+        const displayNotes=sourceNotes.map(m => m + transposeOffset);
+        const analysis=analyzeChord(displayNotes);
+        const autoMap=buildAutoChordSpellings(analysis);
+
+        chordNameEl.textContent = sourceNotes.length ? chordLabel(analysis, autoMap) : '—';
+        if(!sourceNotes.length) return;
+
+        const BASE_X = 170;
+        const SECOND_OFFSET = 9;
+
+        const items=sourceNotes.map(sourceMidi=>{
+            const midi = sourceMidi + transposeOffset;
             return {
-                midi: displayMidi,
-                sourceMidi: m,
-                ...notePosition(displayMidi)
+                midi,
+                sourceMidi,
+                x:BASE_X,
+                ...notePosition(midi, analysis, autoMap)
             };
         });
-        items.forEach(i=>{
-            i.x=205;
-            i.y=i.y;
-        });
 
-        // 和弦排版：
-        // 二度音程只允许两个横向位置，不产生连续阶梯偏移
-        // 模拟传统钢琴谱：左列 + 右列
-        // 三度以上保持同列堆叠
-
-        const NOTE_RX = 7;
-        const SECOND_OFFSET = Math.ceil(
-            Math.sqrt(NOTE_RX * NOTE_RX + 6.5)
-        );
-        const BASE_X = 170;//和弦音符位置
+        applyLocalSecondCollision(items, BASE_X, SECOND_OFFSET);
+        assignAccidentalLanes(items, BASE_X);
 
         items.forEach(i=>{
-            i.x = BASE_X;
-            i.degree = staffDegree(i.midi);
-        });
-
-        let hasSecondCluster = false;
-
-        for(let i=1;i<items.length;i++){
-            const gap = Math.abs(
-                items[i].degree - items[i-1].degree
-            );
-
-            if(gap===1){
-                hasSecondCluster = true;
-                break;
-            }
-        }
-
-        if(hasSecondCluster){
-            // 所有二度链统一限制为两列
-            // 奇偶音级决定左右列
-            const bottomDegree = items[0].degree;
-
-            items.forEach(i=>{
-                const parity =
-                    Math.abs(i.degree-bottomDegree)%2;
-
-                i.x = parity===0
-                    ? BASE_X-SECOND_OFFSET
-                    : BASE_X+SECOND_OFFSET;
-            });
-        }
-
-        items.forEach(i=>{
-            let x=i.x;
-            let y=i.y;
+            const x=i.x;
+            const y=i.y;
 
             // 五线外加线
             if(y<50){ for(let ly=40;ly>=y;ly-=10)addLedger(x,ly); }
             if(y>205){ for(let ly=215;ly<=y;ly+=10)addLedger(x,ly); }
-            if(i.midi===60)addLedger(x,100);
+            if(i.info.name==='C' && i.info.octave===4)addLedger(x,100);
 
-            const info=midiInfo(i.midi);
-            if(info.accidental){
+            if(i.info.accidental){
                 const a=document.createElementNS('http://www.w3.org/2000/svg','text');
-                a.setAttribute('x',x-34); a.setAttribute('y',y+8);
+                a.setAttribute('x',i.accidentalX);
+                a.setAttribute('y',y+8);
                 a.setAttribute('class','staff-accidental');
-                a.textContent='♯';
+                a.textContent=accidentalGlyph(i.info.accidental);
                 notesLayer.appendChild(a);
             }
 
-            // 全音符：椭圆宽度接近谱间距
             const e=document.createElementNS('http://www.w3.org/2000/svg','ellipse');
             e.setAttribute('cx',x); e.setAttribute('cy',y);
             e.setAttribute('rx',7); e.setAttribute('ry',4.8);
@@ -650,8 +971,7 @@
         const freq = midiToFreq(midi);
         const now = audioCtx.currentTime;
 
-        const keyEl = document.getElementById(`midi-${midi}`);
-        if (keyEl) keyEl.classList.add('active');
+        // 可视高亮由 updateActiveKeyHighlights() 统一根据移调后的音高处理。
 
         // 每个音符独立衰减，再进入总线压缩器。
         // 这里必须使用 voiceGain；原优化版漏掉了它的声明，
@@ -689,14 +1009,12 @@
         }
 
         activeNotes.set(midi, { voiceGain, oscillators });
+        updateActiveKeyHighlights();
         updateStaff();
     }
 
     function triggerNoteOff(midi) {
         if (!audioCtx || !activeNotes.has(midi)) return;
-
-        const keyEl = document.getElementById(`midi-${midi}`);
-        if (keyEl) keyEl.classList.remove('active');
 
         const { voiceGain, oscillators } = activeNotes.get(midi);
         const now = audioCtx.currentTime;
@@ -707,6 +1025,7 @@
 
         oscillators.forEach(osc => osc.stop(now + SYNTH_PARAMS.release + 0.1));
         activeNotes.delete(midi);
+        updateActiveKeyHighlights();
         updateStaff();
     }
 
@@ -780,6 +1099,7 @@
 <script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/v3d52b47920f24c319d37e2661827c42b1787588026925" integrity="sha512-d9sL6GJLXn6fInD1+TVXhTcQOsmxeHfmHAvwGDIxp5TO+uo1fiWW7mHomMj4MLRlCsJDTqXzWLHJFFlPCEIj/A==" data-cf-beacon='{"version":"2024.11.0","token":"7939e04a4baf43c8b86a560f74aac60e"}' crossorigin="anonymous"></script>
 <script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/v3d52b47920f24c319d37e2661827c42b1787588026925" integrity="sha512-d9sL6GJLXn6fInD1+TVXhTcQOsmxeHfmHAvwGDIxp5TO+uo1fiWW7mHomMj4MLRlCsJDTqXzWLHJFFlPCEIj/A==" data-cf-beacon='{"version":"2024.11.0","token":"7939e04a4baf43c8b86a560f74aac60e"}' crossorigin="anonymous"></script>
 <script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/v3d52b47920f24c319d37e2661827c42b1787588026925" integrity="sha512-d9sL6GJLXn6fInD1+TVXhTcQOsmxeHfmHAvwGDIxp5TO+uo1fiWW7mHomMj4MLRlCsJDTqXzWLHJFFlPCEIj/A==" data-cf-beacon='{"version":"2024.11.0","token":"7939e04a4baf43c8b86a560f74aac60e"}' crossorigin="anonymous"></script>
+<script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/v31edd6df95cf4e85bb4c19e7a9bdbcba1788362987495" integrity="sha512-iIg7k2xntmwu6/uSb5tpc/hySgZc4eoL31yB29W6tJFo2akwjPWcEqnCEdJvGexCL0KEQwVYv5BlowfhVz26hg==" data-cf-beacon='{"version":"2024.11.0","token":"7939e04a4baf43c8b86a560f74aac60e","spa":2}' crossorigin="anonymous"></script>
 <script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/v31edd6df95cf4e85bb4c19e7a9bdbcba1788362987495" integrity="sha512-iIg7k2xntmwu6/uSb5tpc/hySgZc4eoL31yB29W6tJFo2akwjPWcEqnCEdJvGexCL0KEQwVYv5BlowfhVz26hg==" data-cf-beacon='{"version":"2024.11.0","token":"7939e04a4baf43c8b86a560f74aac60e","spa":2}' crossorigin="anonymous"></script>
 </body>
 </html>
